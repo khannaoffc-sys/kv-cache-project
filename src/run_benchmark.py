@@ -32,10 +32,17 @@ import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, QuantizedCacheConfig
 
-# ─── Project imports ──────────────────────────────────────────────────────────
-# PowerLogger is imported for annotation purposes only; actual logging is
-# deferred until Jetson hardware is available.
-from power_logger import PowerLogger  # noqa: F401  (used in TODO below)
+# ---------------------------------------------------------------------------
+# USE_FAKE_POWER flag -- one-line switch between synthetic and real logging.
+#   True  : import FakePowerLogger (random 5-15 W samples, works everywhere)
+#   False : import real PowerLogger (reads jtop, Jetson only)
+# ---------------------------------------------------------------------------
+USE_FAKE_POWER: bool = True
+
+if USE_FAKE_POWER:
+    from power_logger_fake import PowerLogger  # synthetic, laptop-safe
+else:
+    from power_logger import PowerLogger  # real jtop reader (Jetson only)
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
@@ -260,26 +267,31 @@ for cfg in configs:
     print(f"\n  [{name}] generating …", end=" ", flush=True)
 
     try:
-        # TODO: wrap with PowerLogger once on Jetson:
-        #   logger = PowerLogger(interval=0.1)
-        #   logger.start()
+        # Power logging: real jtop on Jetson, fake sampler on laptop.
+        # Switch between them by toggling USE_FAKE_POWER at the top of this file.
+        logger = PowerLogger(interval=0.1)
+        logger.start()
         text, latency = generate(
             LATENCY_PROMPT,
             press_ctx=cfg["press"],
             cache_config=cfg["cache_config"],
         )
-        #   logger.stop()
-        #   avg_w, dur_s, energy_j = logger.summary()
+        logger.stop()
+        avg_w, dur_s, energy_j = logger.summary()
 
         tps = MAX_NEW_TOKENS / latency if latency > 0 else float("nan")
-        print(f"done  {latency:.2f}s  {tps:.1f} tok/s")
+        power_label = "fake" if USE_FAKE_POWER else "jtop"
+        print(
+            f"done  {latency:.2f}s  {tps:.1f} tok/s  "
+            f"power={avg_w:.1f}W ({power_label})  energy={energy_j:.2f}J"
+        )
         rows.append({
             "config": name,
             "prompt_type": "latency_fixed",
             "latency_s": round(latency, 4),
             "tokens_per_sec": round(tps, 2),
-            "avg_power_w": "N/A",   # Jetson only
-            "energy_j": "N/A",
+            "avg_power_w": round(avg_w, 3),
+            "energy_j": round(energy_j, 3),
             "accuracy": "N/A",
             "output_preview": text[:120].replace("\n", " "),
         })
