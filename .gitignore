@@ -1,0 +1,42 @@
+# Environments
+venv/
+.venv/
+env/
+.env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Results (exclude generated data files)
+results/*.csv
+
+# Figures (exclude generated plots)
+figures/*.png
+figures/*.pdf
+figures/*.svg
+
+# Logs
+*.log
