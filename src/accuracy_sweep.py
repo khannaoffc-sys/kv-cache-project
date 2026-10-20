@@ -1,24 +1,35 @@
 """
-accuracy_sweep.py -- LongBench accuracy sweep across configs x compression ratios.
+accuracy_sweep.py — LongBench accuracy sweep across configs x compression ratios.
 
 Evaluates:
   - Configs      : baseline, SnapKVPress, KnormPress, HQQ-4bit
-  - Comp. ratios : 0.3, 0.5, 0.7  (applied to eviction-based presses only;
-                   HQQ uses fixed nbits=4 and is run once at ratio=N/A)
-  - Examples     : 30-50 from LongBench/narrativeqa
+  - Comp. ratios : 0.3, 0.5, 0.7 (eviction presses); N/A for HQQ-4bit and baseline
+  - Examples     : N via --num_examples flag
 
 Output:
-  results/accuracy_sweep.csv
-  Columns: config, compression_ratio, task, num_examples,
-           avg_accuracy, avg_latency_s, avg_tokens_per_sec
+  results/accuracy_sweep.csv  (append-mode — resumable; existing rows are skipped)
+  Columns: model_name, device, dtype, config, compression_ratio, task,
+           num_examples, avg_accuracy, avg_latency_s, avg_tokens_per_sec, status
+
+LongBench loading (Phase 4):
+  Does NOT use trust_remote_code. Loads Parquet files directly from HuggingFace Hub.
+  Falls back to datasets load_dataset with trust_remote_code as a last resort.
 
 Usage:
-    python src/accuracy_sweep.py [--num_examples 30]
+    # Laptop (0.5B) — 3 examples as a smoke test:
+    python src/accuracy_sweep.py --model Qwen/Qwen2.5-0.5B-Instruct --num_examples 3
+
+    # Cloud GPU (1.5B) — full sweep:
+    python src/accuracy_sweep.py --num_examples 30
+
+    # Resume after interruption (already-finished rows are skipped):
+    python src/accuracy_sweep.py --num_examples 30
 """
 
 import argparse
 import csv
 import math
+import os
 import sys
 import time
 import traceback
@@ -26,57 +37,58 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import torch
-from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, QuantizedCacheConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers.cache_utils import QuantizedCache
 
-# ---------------------------------------------------------------------------
-# Args
-# ---------------------------------------------------------------------------
+# ─── Args ─────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(description="LongBench accuracy sweep")
 parser.add_argument(
+    "--model",
+    default=os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-1.5B-Instruct"),
+    dest="model_name",
+    help="HuggingFace model ID. Laptop default: Qwen/Qwen2.5-0.5B-Instruct",
+)
+parser.add_argument(
     "--num_examples", type=int, default=40,
-    help="Number of LongBench examples to evaluate (default: 40)"
+    help="Number of LongBench examples (default: 40)",
 )
 parser.add_argument(
     "--task", type=str, default="narrativeqa",
-    help="LongBench task name (default: narrativeqa)"
+    help="LongBench task name (default: narrativeqa)",
 )
 args = parser.parse_args()
 
+MODEL_NAME: str = args.model_name
 NUM_EXAMPLES: int = max(1, args.num_examples)
 LONGBENCH_TASK: str = args.task
 MAX_NEW_TOKENS: int = 50
-CONTEXT_MAX_CHARS: int = 3000  # truncate to avoid OOM on CPU
-MODEL_ID: str = "Qwen/Qwen2.5-1.5B-Instruct"
+CONTEXT_MAX_CHARS: int = 3000
+COMPRESSION_RATIOS: List[float] = [0.3, 0.5, 0.7]
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
 RESULTS_FILE = RESULTS_DIR / "accuracy_sweep.csv"
 
-COMPRESSION_RATIOS: List[float] = [0.3, 0.5, 0.7]
-
-# ---------------------------------------------------------------------------
-# Device / dtype
-# ---------------------------------------------------------------------------
+# ─── Device / dtype ───────────────────────────────────────────────────────────
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.float16 if DEVICE == "cuda" else torch.float32
 
 print(f"\n{'='*65}")
-print(f"  Accuracy Sweep  |  Device: {DEVICE.upper()}  |  Examples: {NUM_EXAMPLES}")
+print(f"  Accuracy Sweep")
+print(f"  Model: {MODEL_NAME}")
+print(f"  Device: {DEVICE.upper()}  |  dtype: {DTYPE}  |  Examples: {NUM_EXAMPLES}")
 print(f"  Task: {LONGBENCH_TASK}  |  Ratios: {COMPRESSION_RATIOS}")
 print(f"{'='*65}\n")
 
-# ---------------------------------------------------------------------------
-# Load model + tokeniser
-# ---------------------------------------------------------------------------
+# ─── Load model + tokeniser ───────────────────────────────────────────────────
 print("Loading tokeniser ...")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
 print("Loading model ...")
 model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID,
-    torch_dtype=DTYPE,
+    MODEL_NAME,
+    dtype=DTYPE,
     device_map="auto" if DEVICE == "cuda" else None,
 )
 if DEVICE == "cpu":
@@ -84,28 +96,87 @@ if DEVICE == "cpu":
 model.eval()
 print("Model ready.\n")
 
-# ---------------------------------------------------------------------------
-# Load LongBench dataset
-# ---------------------------------------------------------------------------
+
+# ─── LongBench loading — Phase 4: no trust_remote_code ───────────────────────
+
+def _load_longbench_parquet(task: str, n: int) -> Optional[List[Dict[str, Any]]]:
+    """Load LongBench examples directly from Parquet files, bypassing the
+    custom loading script that datasets 5.1.0 rejects.
+
+    Uses huggingface_hub.hf_hub_download to fetch the Parquet file for the
+    given task, then reads it with pandas or pyarrow.
+
+    Returns a list of example dicts, or None if loading fails.
+    """
+    try:
+        from huggingface_hub import hf_hub_download  # type: ignore[import]
+        import pyarrow.parquet as pq  # type: ignore[import]
+
+        # THUDM/LongBench stores test splits as data/<task>/test-*.parquet
+        # List repo files to find the right path.
+        from huggingface_hub import list_repo_files  # type: ignore[import]
+        repo_files = list(list_repo_files("THUDM/LongBench", repo_type="dataset"))
+        # Find parquet file(s) for this task
+        parquet_files = [
+            f for f in repo_files
+            if f.endswith(".parquet") and task in f and "test" in f
+        ]
+        if not parquet_files:
+            print(f"  [WARN] No Parquet test file found for task={task!r}")
+            return None
+
+        examples = []
+        for pf in parquet_files:
+            local = hf_hub_download(
+                repo_id="THUDM/LongBench",
+                filename=pf,
+                repo_type="dataset",
+            )
+            table = pq.read_table(local)
+            for row in table.to_pylist():
+                examples.append(row)
+                if len(examples) >= n:
+                    break
+            if len(examples) >= n:
+                break
+
+        print(f"  Loaded {len(examples)} examples from Parquet (no trust_remote_code).")
+        return examples[:n]
+
+    except Exception as exc:
+        print(f"  [WARN] Parquet loading failed: {exc}")
+        return None
+
+
 print(f"Loading LongBench/{LONGBENCH_TASK} ({NUM_EXAMPLES} examples) ...")
-try:
-    lb_dataset = load_dataset(
-        "THUDM/LongBench",
-        LONGBENCH_TASK,
-        split="test",
-        trust_remote_code=True,
-    )
-    n = min(NUM_EXAMPLES, len(lb_dataset))
-    lb_examples = list(lb_dataset.select(range(n)))
-    print(f"  Loaded {len(lb_examples)} examples.\n")
-except Exception as exc:
-    print(f"[FATAL] Could not load LongBench: {exc}")
-    sys.exit(1)
+
+lb_examples: List[Dict[str, Any]] = []
+
+# Try 1: Parquet without trust_remote_code
+result = _load_longbench_parquet(LONGBENCH_TASK, NUM_EXAMPLES)
+if result:
+    lb_examples = result
+else:
+    # Try 2: datasets with trust_remote_code (may fail on datasets >= 5.1.0)
+    try:
+        from datasets import load_dataset
+        print("  Attempting datasets load_dataset with trust_remote_code=True ...")
+        lb_dataset = load_dataset(
+            "THUDM/LongBench",
+            LONGBENCH_TASK,
+            split="test",
+            trust_remote_code=True,
+        )
+        n = min(NUM_EXAMPLES, len(lb_dataset))
+        lb_examples = list(lb_dataset.select(range(n)))
+        print(f"  Loaded {len(lb_examples)} examples via datasets.\n")
+    except Exception as exc:
+        print(f"[FATAL] Could not load LongBench by any method: {exc}")
+        sys.exit(1)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
 def _build_prompt(example: Dict[str, Any]) -> str:
     ctx = example.get("context", "")[:CONTEXT_MAX_CHARS]
     q = example.get("input", "")
@@ -123,7 +194,6 @@ def _get_refs(example: Dict[str, Any]) -> List[str]:
 
 
 def _token_f1(pred: str, ref: str) -> float:
-    """Token-level F1 (standard NLP fallback when official scorer unavailable)."""
     pred_toks = pred.lower().split()
     ref_toks = ref.lower().split()
     if not pred_toks or not ref_toks:
@@ -138,24 +208,23 @@ def _token_f1(pred: str, ref: str) -> float:
 
 def _score(pred: str, refs: List[str]) -> float:
     try:
-        from longbench.metrics import scorer as lb_scorer  # type: ignore[import]
-        return max(lb_scorer(pred, ref, LONGBENCH_TASK) for ref in refs)
+        from longbench_metrics import score as lb_score  # type: ignore[import]
+        return max(lb_score(pred, ref, LONGBENCH_TASK) for ref in refs)
     except ImportError:
         pass
     return max(_token_f1(pred, ref) for ref in refs)
 
 
-def generate(prompt: str, press_ctx=None, cache_config=None):
+def generate(prompt: str, press_ctx=None, cache_factory=None):
     """Return (text, latency_s)."""
     enc = tokenizer(
-        prompt, return_tensors="pt", truncation=True, max_length=1024
+        prompt, return_tensors="pt", truncation=True, max_length=2048
     ).to(DEVICE)
     gen_kwargs: Dict[str, Any] = dict(
         **enc, max_new_tokens=MAX_NEW_TOKENS, do_sample=False
     )
-    if cache_config is not None:
-        gen_kwargs["cache_config"] = cache_config
-        gen_kwargs["cache_implementation"] = "quantized"
+    if cache_factory is not None:
+        gen_kwargs["past_key_values"] = cache_factory()
 
     def _run():
         with torch.no_grad():
@@ -174,21 +243,16 @@ def generate(prompt: str, press_ctx=None, cache_config=None):
     return text, latency
 
 
-# ---------------------------------------------------------------------------
-# Build sweep plan:
-#   (label, compression_ratio_or_NA, press_or_None, cache_config_or_None)
-# ---------------------------------------------------------------------------
+# ─── Build sweep plan ─────────────────────────────────────────────────────────
 sweep: List[Dict[str, Any]] = []
 
-# 1. Baseline (no compression) -- run once
 sweep.append({
     "config": "baseline",
     "compression_ratio": "N/A",
     "press": None,
-    "cache_config": None,
+    "cache_factory": None,
 })
 
-# 2. SnapKVPress x ratios
 try:
     from kvpress import SnapKVPress
     for ratio in COMPRESSION_RATIOS:
@@ -196,12 +260,11 @@ try:
             "config": "SnapKVPress",
             "compression_ratio": ratio,
             "press": SnapKVPress(compression_ratio=ratio),
-            "cache_config": None,
+            "cache_factory": None,
         })
 except Exception as exc:
     print(f"[WARN] SnapKVPress unavailable: {exc}")
 
-# 3. KnormPress x ratios
 try:
     from kvpress import KnormPress
     for ratio in COMPRESSION_RATIOS:
@@ -209,39 +272,61 @@ try:
             "config": "KnormPress",
             "compression_ratio": ratio,
             "press": KnormPress(compression_ratio=ratio),
-            "cache_config": None,
+            "cache_factory": None,
         })
 except Exception as exc:
     print(f"[WARN] KnormPress unavailable: {exc}")
 
-# 4. HQQ 4-bit quantised cache -- fixed precision, run once
 try:
-    hqq_cfg = QuantizedCacheConfig(nbits=4, backend="HQQ")
+    _ = QuantizedCache
     sweep.append({
         "config": "HQQ-4bit",
         "compression_ratio": "N/A",
         "press": None,
-        "cache_config": hqq_cfg,
+        "cache_factory": lambda: QuantizedCache(
+            backend="hqq",
+            config=model.config,
+            nbits=4,
+        ),
     })
 except Exception as exc:
-    print(f"[WARN] HQQ QuantizedCacheConfig unavailable: {exc}")
+    print(f"[WARN] HQQ QuantizedCache unavailable: {exc}")
 
-# ---------------------------------------------------------------------------
-# Run sweep
-# ---------------------------------------------------------------------------
-RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# ─── Load already-finished rows (resumability) ─────────────────────────────────
+
 fieldnames = [
+    "model_name", "device", "dtype",
     "config", "compression_ratio", "task", "num_examples",
-    "avg_accuracy", "avg_latency_s", "avg_tokens_per_sec",
+    "avg_accuracy", "avg_latency_s", "avg_tokens_per_sec", "status",
 ]
 
-rows: List[Dict[str, Any]] = []
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+finished_keys: set = set()
+if RESULTS_FILE.exists():
+    with open(RESULTS_FILE, newline="") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            key = (row.get("model_name", ""), row.get("config", ""),
+                   row.get("compression_ratio", ""), row.get("task", ""))
+            finished_keys.add(key)
+    print(f"  Resuming: {len(finished_keys)} rows already in CSV — will skip.\n")
+
+
+# ─── Run sweep ────────────────────────────────────────────────────────────────
+
 total_runs = len(sweep)
 
 for run_idx, entry in enumerate(sweep):
     cfg_label = entry["config"]
     ratio = entry["compression_ratio"]
     label_str = f"{cfg_label}(ratio={ratio})" if ratio != "N/A" else cfg_label
+
+    key = (MODEL_NAME, cfg_label, str(ratio), LONGBENCH_TASK)
+    if key in finished_keys:
+        print(f"[{run_idx+1}/{total_runs}] {label_str} — SKIPPED (already in CSV)")
+        continue
 
     print(f"\n[{run_idx+1}/{total_runs}] {label_str}")
     print("-" * 55)
@@ -258,7 +343,7 @@ for run_idx, entry in enumerate(sweep):
             pred, latency = generate(
                 prompt,
                 press_ctx=entry["press"],
-                cache_config=entry["cache_config"],
+                cache_factory=entry.get("cache_factory"),
             )
             sc = _score(pred, refs)
             scores.append(sc)
@@ -275,8 +360,12 @@ for run_idx, entry in enumerate(sweep):
     avg_acc = sum(valid_scores) / len(valid_scores) if valid_scores else float("nan")
     avg_lat = sum(valid_lats) / len(valid_lats) if valid_lats else float("nan")
     avg_tps = MAX_NEW_TOKENS / avg_lat if avg_lat > 0 else float("nan")
+    status = "ok" if valid_scores else "ERROR"
 
     row = {
+        "model_name": MODEL_NAME,
+        "device": DEVICE,
+        "dtype": str(DTYPE),
         "config": cfg_label,
         "compression_ratio": ratio,
         "task": LONGBENCH_TASK,
@@ -284,34 +373,24 @@ for run_idx, entry in enumerate(sweep):
         "avg_accuracy": round(avg_acc, 4) if not math.isnan(avg_acc) else "NaN",
         "avg_latency_s": round(avg_lat, 4) if not math.isnan(avg_lat) else "NaN",
         "avg_tokens_per_sec": round(avg_tps, 2) if not math.isnan(avg_tps) else "NaN",
+        "status": status,
     }
-    rows.append(row)
 
     print(
         f"  => avg_acc={avg_acc:.4f}  avg_lat={avg_lat:.2f}s  "
-        f"tps={avg_tps:.1f}"
+        f"tps={avg_tps:.1f}  status={status}"
     )
 
-    # Write incrementally so partial results are preserved on crash
-    write_header = not RESULTS_FILE.exists() or run_idx == 0
+    # Append incrementally — crash-safe resume
+    write_header = not RESULTS_FILE.exists()
     with open(RESULTS_FILE, "a" if not write_header else "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         if write_header:
             writer.writeheader()
         writer.writerow(row)
 
-# ---------------------------------------------------------------------------
-# Summary table
-# ---------------------------------------------------------------------------
+
+# ─── Summary ──────────────────────────────────────────────────────────────────
 print(f"\n{'='*65}")
-print(f"  Accuracy sweep complete. Results -> {RESULTS_FILE}")
-print(f"{'='*65}")
-print(f"\n  {'Config':<16} {'Ratio':>6}  {'AvgAcc':>8}  {'AvgLat(s)':>10}  {'Tok/s':>7}")
-print(f"  {'-'*16} {'-'*6}  {'-'*8}  {'-'*10}  {'-'*7}")
-for r in rows:
-    print(
-        f"  {r['config']:<16} {str(r['compression_ratio']):>6}  "
-        f"{str(r['avg_accuracy']):>8}  {str(r['avg_latency_s']):>10}  "
-        f"{str(r['avg_tokens_per_sec']):>7}"
-    )
-print()
+print(f"  Accuracy sweep complete.  Results -> {RESULTS_FILE}")
+print(f"{'='*65}\n")

@@ -1,0 +1,44 @@
+"""
+requirements-gpu.txt — Dependencies for cloud GPU runner (Kaggle / Colab).
+
+Install with:
+    pip install -r requirements-gpu.txt
+
+Notes:
+- No Windows-specific pins (no torch+cpu suffix).
+- torch is installed first via the cell below, NOT from this file,
+  to get the CUDA-enabled wheel from PyTorch's index.
+- pynvml is included for NVML power logging.
+- On Kaggle/Colab T4/A100, nvmlDeviceGetPowerUsage may return N/A
+  for virtualised GPUs. The runner will print a warning.
+"""
+
+# ── Core inference ─────────────────────────────────────────────────────────────
+transformers>=4.47.0
+accelerate>=0.27.0
+tokenizers>=0.20.0
+huggingface_hub>=0.26.0
+
+# ── KV-cache compression ───────────────────────────────────────────────────────
+kvpress>=0.5.5
+
+# ── Datasets & evaluation ──────────────────────────────────────────────────────
+datasets>=2.14.0
+pyarrow>=14.0.0
+
+# ── LongBench scoring (optional — rouge and fuzzywuzzy) ───────────────────────
+rouge
+fuzzywuzzy
+python-Levenshtein
+
+# ── Power logging ─────────────────────────────────────────────────────────────
+nvidia-ml-py>=12.535.108
+
+# ── HQQ quantization ──────────────────────────────────────────────────────────
+hqq>=0.1.8
+
+# ── Plotting ──────────────────────────────────────────────────────────────────
+matplotlib>=3.8.0
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=7.0.0
