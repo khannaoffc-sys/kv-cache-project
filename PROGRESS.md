@@ -8,37 +8,39 @@
 
 ## 1 · Project Status
 
-**One-line summary:** Laptop scaffold complete — code structure valid but NO benchmark numbers are trustworthy yet (see §6 for reasons). Cloud GPU + FPGA work not started.
+**One-line summary:** Phases 0-7 scaffold complete. All code committed. No valid benchmark numbers yet — those require the cloud GPU runner (Phase 5).
 
-**Overall completion:** ~20 % (downgraded from 25% after invalidating fake-power results)
+**Overall completion:** ~45 %
 
-**Hardware scope change (PENDING ADVISOR APPROVAL):** The original proposal named a Jetson Orin Nano as the edge inference target. No Jetson is available and none is planned. The actual hardware platform is:
-- **Laptop (CPU-only, 7.7 GB RAM):** scaffold, smoke tests, FPGA golden-model generation. Model: Qwen/Qwen2.5-0.5B-Instruct only.
-- **Cloud GPU (Kaggle/Colab):** real latency numbers, NVML power, accuracy sweep with 1.5B model.
-- **FPGA eviction unit (Arty A7-100T / Artix-7):** hardware KV eviction accelerator.
-
-The Jetson-specific jtop power logger (`power_logger.py`) is retained but is not the primary power path. This scope change must be recorded in the paper Limitations section.
+**Hardware scope change (PENDING ADVISOR APPROVAL):**
+- **Laptop (CPU-only, 7.7 GB RAM):** scaffold, smoke tests, FPGA golden model. Model: Qwen/Qwen2.5-0.5B-Instruct only.
+- **Cloud GPU (Kaggle/Colab):** real latency, NVML power, accuracy sweep with 1.5B model. Model: Qwen/Qwen2.5-1.5B-Instruct.
+- **FPGA (Arty A7-100T / Artix-7):** KV eviction unit. Phase 6 software verified first, Verilog second.
 
 ---
 
 ## 2 · Completed
 
-Evidence column cites the specific log/output that confirms the task ran.
-
-| # | Task | Date | Files Touched | Verification Evidence |
-|---|------|------|---------------|-----------------------|
-| 1 | **Project scaffold** | 2026-10-07 | `README.md`, `.gitignore` | git commit `3774cca` |
-| 2 | **`requirements.txt`** | 2026-10-07 | `requirements.txt` | task-78/task-80 logs: pip freeze ran |
-| 3 | **`check_env.py`** | 2026-10-07 | `src/check_env.py` | task-78.log: torch 2.14.1+cpu, transformers 5.2.0, kvpress 0.5.5 all ok |
-| 4 | **`power_logger.py`** (jtop/Jetson) | 2026-10-07 | `src/power_logger.py` | git `f4823d1`; test_real_start_raises_without_jtop PASSED |
-| 5 | **`power_logger_fake.py`** | 2026-10-07 | `src/power_logger_fake.py` | task-107.log: 10 interface-parity tests PASSED |
-| 6 | **`smoke_test.py`** | 2026-10-07 | `src/smoke_test.py` | git `f4823d1` |
-| 7 | **`run_benchmark.py`** code committed | 2026-10-07 | `src/run_benchmark.py` | CSV exists but numbers are **INVALID** — see §6 |
-| 8 | **`tests/test_benchmark.py`** | 2026-10-07 | `tests/test_benchmark.py` | 30 passed, 2 skipped in 0.54 s — but tests had weaknesses, see §6 |
-| 9 | **`plot_results.py`** | 2026-10-07 | `src/plot_results.py` | figure exists but based on invalid data — must regenerate |
-| 10 | **`accuracy_sweep.py`** code committed | 2026-10-07 | `src/accuracy_sweep.py` | Never executed — no CSV |
-| 11 | **Related Work draft** | 2026-10-07 | artifact only | Not yet in repo |
-| 12 | **Phase 0 PROGRESS.md corrections** | 2026-10-20 | `PROGRESS.md` | This commit — see §6 for root-cause corrections |
+| # | Task | Date | Evidence |
+|---|------|------|----------|
+| 1 | Project scaffold | 2026-10-07 | git `3774cca` |
+| 2 | `requirements.txt` | 2026-10-07 | git `2dbb948` |
+| 3 | `check_env.py` | 2026-10-07 | task-78.log: torch 2.14.1+cpu, kvpress 0.5.5 all ok |
+| 4 | `power_logger.py` (jtop/Jetson) | 2026-10-07 | git `f4823d1`; test_real_start_raises_without_jtop PASSED |
+| 5 | `power_logger_fake.py` | 2026-10-07 | task-107.log: 10 interface-parity tests PASSED |
+| 6 | `smoke_test.py` | 2026-10-07 | git `f4823d1` |
+| 7-10 | run_benchmark, accuracy_sweep, plot_results, tests (initial) | 2026-10-07 | git `2dbb948` — numbers invalid, see §6 |
+| 11 | Related Work draft | 2026-10-07 | Antigravity artifact only — not yet in repo |
+| **12** | **Phase 0: PROGRESS.md root-cause corrections** | **2026-10-20** | **git `26883c3`** |
+| **13** | **Phase 1: MODEL_NAME CLI/env flag** | **2026-10-20** | **git `9516047`** — run_benchmark.py, smoke_test.py, accuracy_sweep.py all updated; `--model` flag; dtype auto-selection (float16/CUDA, float32/CPU); `torch_dtype` deprecation fixed |
+| **14** | **Phase 2: Valid benchmark** | **2026-10-20** | **git `9516047`** — LATENCY_PROMPT ≥512 tokens asserted; 1 warm-up + 3 timed reps with rotated order; mean±std; new CSV columns: model_name, device, dtype, status, power_source, prompt_tokens, new_tokens, kv_cache_bytes, latency_std_s; fake-power energy blank; plot_results.py guards fake energy |
+| **15** | **Phase 2: Strengthened tests** | **2026-10-20** | **46 passed, 2 skipped** in 0.65 s (pytest-9.1.1, Python 3.10.11). Tests now fail on ERROR rows, NaN rows, fake-power energy, wrong columns, and invalid compression_ratio. LongBench metrics unit tests added. |
+| **16** | **Phase 3: NVML power logger** | **2026-10-20** | **git `9516047`** — `src/power_logger_nvml.py`: deferred pynvml import, idle baseline, clear N/A warning; same interface as fake/jtop; `POWER_BACKEND` env var (fake|nvml|jtop); import-guard tested in `test_nvml_start_raises_without_pynvml` PASSED |
+| **17** | **Phase 4: Real LongBench loading** | **2026-10-20** | **git `9516047`** — `longbench_metrics.py`: official scorers from THUDM/LongBench commit `2e00731` (2025-01-15), source URL in header; `load_longbench_jsonl()` reads `data.zip` without `trust_remote_code`; accuracy_sweep.py uses Parquet/zip path + resumable CSV |
+| **18** | **Phase 4: LongBench repo inspection** | **2026-10-20** | Real output from `list_repo_files('THUDM/LongBench', repo_type='dataset')`: `.gitattributes`, `LongBench.py`, `README.md`, `data.zip`. Data is in `data.zip` → `data/<task>.jsonl`. No Parquet files. Loading script confirmed to download and extract `data.zip`. |
+| **19** | **Phase 5: Cloud runner** | **2026-10-20** | **git `9516047`** — `src/cloud_runner.py`: auto-detects GPU, reads HF_TOKEN from Kaggle Secrets/Colab userdata, checks NVML power with N/A warning, runs benchmark + 3-example sweep; `requirements-gpu.txt`: no Windows pins |
+| **20** | **Phase 6: FPGA golden model (software side — config confirmed)** | **2026-10-20** | **git `9516047`** — `src/fpga_golden_model.py`: inspects cache object, documents KnormPress scoring, INT8 golden model, Jaccard overlap, .mem hex files. **Model config confirmed** (real command output — see §6.2): layers=24, heads=14, kv_heads=2, hidden=896, head_dim=64. Forward-pass shapes and Jaccard overlap numbers must be run on cloud GPU (CPU load >5 min). |
+| **21** | **Phase 7: Limitations + Related Work** | **2026-10-20** | **git `9516047`** — `docs/report_notes_phase7.md`: Limitations L1-L6; Related Work update with verified KnormPress scoring direction; [uncertain] tags retained |
 
 ---
 
@@ -50,62 +52,95 @@ Nothing is currently mid-execution.
 
 ## 4 · Blocked on Me
 
-1. **Cloud GPU run** — All valid latency/power numbers need Kaggle/Colab GPU. Phase 5 runner provides exact command.
-2. **Advisor approval** — hardware scope changed from Jetson to cloud GPU + FPGA. Must notify advisor.
-3. **Copy Related Work draft into repo** — lives only in Antigravity artifact directory.
+1. **Cloud GPU run** — Run `src/cloud_runner.py` on Kaggle or Colab to get real latency/power/accuracy.
+
+   ```
+   # Kaggle: turn on GPU + Internet, add HF_TOKEN secret, then in a notebook cell:
+   !git clone https://github.com/<YOUR_REPO>/kv-cache-project.git
+   %cd kv-cache-project
+   !pip install torch --index-url https://download.pytorch.org/whl/cu121 -q
+   !pip install -r requirements-gpu.txt -q
+   !python src/cloud_runner.py
+   ```
+
+2. **Phase 6 shapes + overlap** — Run `fpga_golden_model.py` on cloud GPU (CPU load >5 min):
+
+   ```
+   python src/fpga_golden_model.py
+   ```
+
+   Report the printed shapes and Jaccard numbers back here. **Do not write Verilog until those numbers are confirmed.**
+
+3. **Phase 4 accuracy sweep smoke test (3 examples)** — Run locally with 0.5B model:
+
+   ```
+   python src/accuracy_sweep.py --model Qwen/Qwen2.5-0.5B-Instruct --num_examples 3
+   ```
+
+   Report the actual output. Do not launch the full sweep locally.
+
+4. **Advisor approval** — hardware scope change from Jetson to cloud GPU + FPGA.
+
+5. **Copy Related Work draft** — `docs/report_notes_phase7.md` has the draft. Copy expanded version to `docs/related_work.md` and commit.
 
 ---
 
-## 5 · Remaining (Ordered by Phase)
+## 5 · Remaining (Ordered)
 
-1. Phase 1 — MODEL_NAME CLI flag; model_name/device/dtype columns in CSV
-2. Phase 2 — Prompt >= 512 tokens asserted; warm-up; 3-rep mean/std; status/power_source/kv_cache_bytes columns; fix tests
-3. Phase 3 — NVML power logger; POWER_BACKEND env var
-4. Phase 4 — Real LongBench loading (no trust_remote_code); official scorer; resumable sweep
-5. Phase 5 — Kaggle/Colab runner + requirements-gpu.txt
-6. Phase 6 — FPGA: cache inspection, KnormPress golden model, .mem test vectors
-7. Phase 7 — Limitations + Related Work update
-8. Hardware — Run on Kaggle/Colab; download CSV; commit real numbers
-9. FPGA — Verilog eviction unit (after Phase 6 verified)
-10. Paper — Experiment + results sections, final figures, LaTeX/PDF
+1. Cloud GPU run → real benchmark_results.csv (valid numbers)
+2. Cloud GPU run → real accuracy_sweep.csv (narrativeqa, N=30)
+3. Phase 6 on cloud GPU → shapes + Jaccard → report → write Verilog
+4. Phase 4 smoke test locally (3 examples, 0.5B)
+5. Full accuracy sweep on cloud GPU (N=30)
+6. Copy Related Work draft to docs/related_work.md
+7. Resolve all [uncertain] citations in Related Work
+8. FPGA Verilog eviction unit (after Phase 6 numbers confirmed)
+9. Validate FPGA output against golden model .mem files
+10. Paper: experiment section, results section, figures, LaTeX/PDF
 
 ---
 
-## 6 · Known Issues and Uncertain Claims
+## 6 · Known Issues and Evidence
 
-### Phase 0 Root-Cause Corrections
+### 6.1 Phase 0 Root Causes (confirmed)
 
-| Issue | Status | Correct Root Cause |
-|-------|--------|--------------------|
-| **SnapKVPress ERROR** | ❌ Fixed in Phase 2 | Prompt had only ~11 tokens. SnapKVPress requires seq_len > window_size (default 64). **NOT a kvpress API issue.** Fix: assert prompt >= 512 tokens. |
-| **LongBench load failure** | ❌ Fixed in Phase 4 | THUDM/LongBench uses a custom loading script. datasets 5.1.0 rejects trust_remote_code=True. **NOT a missing HF_TOKEN.** Fix: load Parquet files directly via huggingface_hub. |
-| **Benchmark numbers INVALID** | ❌ Must discard | (a) ~11-token prompt — no real KV compression; (b) no warm-up before timing; (c) power is fake. Do not cite any number from benchmark_results.csv. |
-| **Tests passed despite ERROR row** | ❌ Fixed in Phase 2 | Tests only checked column names, not row content. Phase 2 tests fail on any ERROR/NaN row. |
-| **HQQ-4bit output degenerate** | ⚠️ Under investigation | Output had repeated tokens ("Provide provide a an example…"). Possible: QuantizedCache API changed in transformers 5.x, or nbits=4 on CPU is unstable. Investigate in Phase 2. |
+| Issue | Root Cause (confirmed) | Evidence |
+|-------|------------------------|----------|
+| SnapKVPress ERROR | 11-token prompt < window_size=64. NOT a kvpress API issue. | `SnapKVPress(compression_ratio=0.5).window_size = 64` — real command output (task-25) |
+| LongBench failure | datasets 5.1.0 rejects trust_remote_code. NOT a missing HF_TOKEN. | LongBench.py confirmed via `hf_hub_download` — loading script exists; datasets 5.1.0 security policy |
+| Benchmark numbers invalid | Short prompt (~11 tok), no warm-up, fake power | benchmark_results.csv deleted |
+| Tests passed despite ERROR rows | Tests only checked column names, not row content | Fixed in Phase 2 — now 46 pass |
+| HQQ-4bit degenerate output | Under investigation — repeated tokens suggest API mismatch | Phase 2 adds status column; will be visible after next run |
 
-### Fake Power — MUST EXCLUDE from all results
+### 6.2 Phase 6 — Confirmed model config (real output)
 
-> ALL energy/power numbers in `benchmark_results.csv` are from `power_logger_fake.py`
-> (uniform random 5-15 W). These are FABRICATED. Never put them in a table or figure.
-> `plot_results.py` must refuse to plot fake-power energy.
+```
+Command: .\venv\Scripts\python.exe -c "from transformers import AutoConfig; ..."
+Output:  layers: 24  heads: 14  kv_heads: 2  hidden: 896
+```
 
-### Uncertain Claims in Related Work Draft
+**Derived facts (not yet confirmed from forward pass — pending cloud run):**
+- head_dim = 896 / 14 = 64
+- Key tensor shape (expected): `(1, 2, seq_len, 64)` — (batch, num_kv_heads, seq_len, head_dim)
+- Layer 0 and layer 10 shapes will be identical for this model (uniform architecture)
 
-| Claim | Action needed |
-|-------|---------------|
-| SnapKV clustering algorithm; value norms used? | Read Li et al. 2024 (arXiv 2404.14469) |
-| AdaKV venue/year | Find actual citation |
-| WKVQuant venue and exact title | Find actual citation |
-| HQQ venue (NeurIPS workshop 2023?) | Check Badri & Shaji proceedings |
-| MagicPIG: compressed vs. on-the-fly | Read He et al. 2024 (arXiv 2410.16179) |
-| LCKV venue (ACL 2024?) | Verify in ACL Anthology |
-| CLA exact citation | Find paper |
-| Gear exact title and venue | Find paper |
-| ZipCache exact citation | Find paper |
-| Quest venue (ICML 2024?) | Verify |
-| kvpress paper (Jobin et al. arXiv 2024) | Confirm arXiv ID |
-| No joint eviction+quant energy study on Jetson | Now moot — hardware changed to cloud GPU + FPGA |
-| "Energy rarely reported directly" | Systematic literature search needed |
+**KnormPress scoring direction (confirmed from installed source):**
+```python
+# src: venv/lib/site-packages/kvpress/presses/knorm_press.py lines 45-46
+score_dtype = torch.promote_types(keys.dtype, torch.float32)
+return -torch.linalg.vector_norm(keys, dim=-1, dtype=score_dtype)
+```
+- Score = **negative L2 norm** per token, in float32+
+- `topk(n_keep)` on negative scores = keep tokens with **smallest** key L2 norms
+- **EVICTS** tokens with **large** key norms; **KEEPS** tokens with **small** key norms
+- Does NOT use value norms
+
+**Jaccard overlap (INT8 golden vs KnormPress float32):** PENDING cloud GPU run.
+
+### 6.3 Fake Power
+
+ALL energy/power in old `benchmark_results.csv` were fabricated (uniform 5-15 W random).
+That CSV is deleted. New CSV has blank energy_j when power_source=fake.
 
 ---
 
@@ -113,11 +148,25 @@ Nothing is currently mid-execution.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Laptop (Windows, CPU-only, 7.7 GB RAM) | ✅ Active | Qwen2.5-0.5B-Instruct only (0.5B fits; 1.5B causes swapping) |
-| Cloud GPU (Kaggle/Colab) | 🔲 Planned | Qwen2.5-1.5B-Instruct; NVML power; Phase 5 runner |
-| FPGA (Arty A7-100T / Artix-7) | 🔲 Planned | KV eviction unit; Phase 6 golden model + test vectors first |
-| Jetson Orin Nano | ❌ Removed from scope | Pending advisor approval. jtop logger retained but not primary. |
+| Laptop (Windows, CPU-only, 7.7 GB RAM) | ✅ Active | Qwen2.5-0.5B-Instruct only; 0.5B model config confirmed |
+| Cloud GPU (Kaggle/Colab) | 🔲 Ready — needs run | cloud_runner.py committed; Kaggle setup: GPU+Internet on, HF_TOKEN secret |
+| FPGA (Arty A7-100T / Artix-7) | 🔲 Software side done | fpga_golden_model.py committed; awaiting cloud run for shapes+overlap before Verilog |
+| Jetson Orin Nano | ❌ Removed from scope | Pending advisor approval. jtop logger retained. |
 
 ---
 
-*Last updated: 2026-10-20 · Phase 0 complete.*
+## 8 · Test Suite Status
+
+```
+pytest tests/test_benchmark.py -v
+46 passed, 2 skipped in 0.65 s
+Python 3.10.11 / pytest-9.1.1
+Date: 2026-10-20
+```
+
+Skipped: test_actual_benchmark_csv_if_exists, test_actual_sweep_csv_if_exists
+(Both skip when CSVs absent — correct behaviour. Will PASS after cloud run.)
+
+---
+
+*Last updated: 2026-10-20 · Phases 0-7 scaffold complete. Awaiting cloud GPU run.*
