@@ -40,3 +40,9 @@ figures/*.svg
 
 # Logs
 *.log
+
+work/
+transcript
+golden_out.txt
+*.wlf
+kv_repo.zip

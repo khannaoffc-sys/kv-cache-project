@@ -1,4 +1,4 @@
-"""
+﻿"""
 fpga_golden_model.py — Software golden model for the FPGA KV eviction unit.
 
 Phase 6 — Software side (stop here before writing Verilog).
@@ -97,7 +97,7 @@ print(f"  type(past_key_values)  : {type(pkv).__name__}")
 print(f"  num_layers             : {num_layers}")
 
 for layer_idx in [0, 10]:
-    k = pkv[layer_idx][0]  # (batch, num_kv_heads, seq_len, head_dim)
+    k = pkv.layers[layer_idx].keys  # (batch, num_kv_heads, seq_len, head_dim)
     print(
         f"  layer {layer_idx:>2} key shape   : {tuple(k.shape)}"
         f"  → (batch={k.shape[0]}, num_kv_heads={k.shape[1]}, "
@@ -109,7 +109,7 @@ for layer_idx in [0, 10]:
 cfg = model.config
 NUM_KV_HEADS = getattr(cfg, "num_key_value_heads", cfg.num_attention_heads)
 HEAD_DIM = cfg.hidden_size // cfg.num_attention_heads
-SEQ_LEN = pkv[0][0].shape[2]
+SEQ_LEN = pkv.layers[0].keys.shape[2]
 
 print(f"\n  Model config:")
 print(f"    num_hidden_layers   : {cfg.num_hidden_layers}")
@@ -244,7 +244,7 @@ for ratio in RATIOS:
     layer_mean_jaccard = {}
 
     for layer_idx in REPORT_LAYERS:
-        keys = pkv[layer_idx][0]  # (1, num_kv_heads, seq_len, head_dim)
+        keys = pkv.layers[layer_idx].keys  # (1, num_kv_heads, seq_len, head_dim)
         keys_3d = keys[0]         # (num_kv_heads, seq_len, head_dim)
 
         # INT8 golden model
@@ -285,7 +285,7 @@ SAVE_RATIO = 0.5
 n_keep_save = max(1, int(SEQ_LEN * (1 - SAVE_RATIO)))
 
 for layer_idx in [0, 10]:
-    keys = pkv[layer_idx][0][0]  # (num_kv_heads, seq_len, head_dim)
+    keys = pkv.layers[layer_idx].keys[0]  # (num_kv_heads, seq_len, head_dim)
     # Use head 0 only for .mem files (FPGA processes one head at a time)
     keys_h0 = keys[0]  # (seq_len, head_dim)
 
@@ -347,8 +347,8 @@ print(f"""
   seq_len (prefill)  : {SEQ_LEN}
 
   Key tensor shape (per layer):
-    Layer  0: {tuple(pkv[0][0].shape)}   (batch, num_kv_heads, seq_len, head_dim)
-    Layer 10: {tuple(pkv[10][0].shape)}
+    Layer  0: {tuple(pkv.layers[0].keys.shape)}   (batch, num_kv_heads, seq_len, head_dim)
+    Layer 10: {tuple(pkv.layers[10].keys.shape)}
 
   KnormPress scoring direction (from installed source):
     Score = -L2_norm(key, dim=head_dim)  in float32
