@@ -1,0 +1,7 @@
+model_name,device,dtype,config,prompt_type,prompt_tokens,new_tokens,kv_cache_bytes,latency_s,latency_std_s,tokens_per_sec,power_source,avg_power_w,energy_j,accuracy,status,output_preview
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,baseline,latency_fixed,553,50,N/A,2.7748,0.0304,18.02,nvml,36.603,121.281,N/A,ok,
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,SnapKVPress(0.5),latency_fixed,553,50,N/A,2.9416,0.0215,17.0,nvml,35.57,123.292,N/A,ok,
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,KnormPress(0.5),latency_fixed,553,50,N/A,2.9557,0.0194,16.92,nvml,35.409,122.037,N/A,ok,
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,HQQ-4bit,latency_fixed,553,50,N/A,3.631,0.0209,13.77,nvml,34.748,141.858,N/A,ok,
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,baseline,longbench_narrativeqa,varies,50,N/A,1.2938,N/A,38.65,nvml,,,0.1995,ok,5 examples
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,SnapKVPress(0.5),longbench_narrativeqa,varies,50,N/A,1.5981,N/A,31.29,nvml,,,0.2036,ok,5 examples

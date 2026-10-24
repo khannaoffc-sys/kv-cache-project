@@ -1,0 +1,9 @@
+model_name,device,dtype,config,compression_ratio,task,num_examples,avg_accuracy,avg_latency_s,avg_tokens_per_sec,status
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,baseline,N/A,narrativeqa,30,0.1556,7.5397,6.63,ok
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,SnapKVPress,0.3,narrativeqa,30,0.1616,8.232,6.07,ok
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,SnapKVPress,0.5,narrativeqa,30,0.165,8.022,6.23,ok
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,SnapKVPress,0.7,narrativeqa,30,0.162,7.8891,6.34,ok
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,KnormPress,0.3,narrativeqa,30,0.1765,7.6511,6.53,ok
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,KnormPress,0.5,narrativeqa,30,0.1897,7.4485,6.71,ok
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,KnormPress,0.7,narrativeqa,30,0.1383,7.4073,6.75,ok
+Qwen/Qwen2.5-1.5B-Instruct,cuda,torch.float16,HQQ-4bit,N/A,narrativeqa,30,0.1315,8.2888,6.03,ok
