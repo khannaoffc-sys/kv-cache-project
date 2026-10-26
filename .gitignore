@@ -46,3 +46,9 @@ transcript
 golden_out.txt
 *.wlf
 kv_repo.zip
+
+fpga/quartus/db/
+fpga/quartus/output_files/
+fpga/quartus/incremental_db/
+fpga/quartus/mem/
+*.sof
