@@ -50,6 +50,9 @@ class PowerLogger:
         self._stop_event = threading.Event()
         self._start_time: Optional[float] = None
         self._stop_time: Optional[float] = None
+        self._ready_event = threading.Event()
+        self._active_start: Optional[float] = None  # first real sample
+        self._active_stop: Optional[float] = None   # taken before join
 
     # ─────────────────────────────────────────────────────────────────────────
     # Public API
@@ -80,14 +83,19 @@ class PowerLogger:
 
         self._samples.clear()
         self._stop_event.clear()
+        self._ready_event.clear()
+        self._active_start = None
+        self._active_stop = None
         self._start_time = time.perf_counter()
         self._thread = threading.Thread(target=self._sample_loop, daemon=True)
         self._thread.start()
+        self._ready_event.wait(timeout=10.0)
 
     def stop(self) -> None:
         """Stop background sampling and wait for the thread to finish."""
         if self._thread is None:
             return
+        self._active_stop = time.perf_counter()
         self._stop_event.set()
         self._thread.join(timeout=5.0)
         self._stop_time = time.perf_counter()
@@ -115,11 +123,15 @@ class PowerLogger:
                 "Call start() followed by stop() before reading summary()."
             )
         if not self._samples:
-            return 0.0, self._stop_time - self._start_time, 0.0
+            return float("nan"), self._stop_time - self._start_time, float("nan")
 
-        watts = [w for _, w in self._samples]
+        watts = [w for _, w in self._samples if w == w]  # drop NaN
+        if not watts:
+            return float("nan"), self._stop_time - self._start_time, float("nan")
         avg_power = sum(watts) / len(watts)
-        duration = self._stop_time - self._start_time
+        t_a = self._active_start if self._active_start is not None else self._start_time
+        t_b = self._active_stop if self._active_stop is not None else self._stop_time
+        duration = t_b - t_a
         energy = avg_power * duration
         return avg_power, duration, energy
 
@@ -154,7 +166,7 @@ class PowerLogger:
             return  # Already guarded in start(); this is a safety net
 
         try:
-            with jtop() as jetson:
+            with jtop(interval=self._interval) as jetson:
                 while not self._stop_event.is_set():
                     try:
                         power_w = jetson.power["tot"]["power"] / 1_000.0  # mW → W
@@ -167,6 +179,10 @@ class PowerLogger:
 
                     ts = time.perf_counter() - self._start_time
                     self._samples.append((ts, power_w))
+                    if self._active_start is None:
+                        self._active_start = time.perf_counter()
+                        self._ready_event.set()
                     self._stop_event.wait(timeout=self._interval)
         except Exception as exc:  # noqa: BLE001
             print(f"[PowerLogger] Sampling thread error: {exc}")
+            self._ready_event.set()
