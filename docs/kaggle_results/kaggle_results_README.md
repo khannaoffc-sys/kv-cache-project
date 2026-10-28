@@ -20,3 +20,6 @@ These are the real result files from the Kaggle runs, copied out as text with `c
 5. **Accuracy differences are inside the noise** (30 examples, one task, roughly plus or minus 0.03, rough estimate). Do not claim any method beats the baseline.
 6. **Custom prompt and settings** (50 new tokens, passage cut to 24,000 characters, 8,192-token input cap). Not comparable with published LongBench numbers. Whether the official scorer was used is unverified.
 7. **HQQ-4bit output quality was never inspected.**
+
+
+> **Correction:** the energy_j column in these CSVs is overstated. The NVML logger window included a ~0.5 s idle-baseline phase (fixed in commit 07feb8a). Use avg_power_w x latency_s until the benchmark is rerun with the patched logger.
