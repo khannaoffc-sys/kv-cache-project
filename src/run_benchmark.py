@@ -47,7 +47,10 @@ from typing import Any, Dict, List, Optional
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from transformers.cache_utils import QuantizedCache
+try:
+    from transformers.cache_utils import QuantizedCache
+except ImportError:  # for example an older transformers on the Jetson
+    QuantizedCache = None
 
 # ─── Argument parsing ─────────────────────────────────────────────────────────
 _parser = argparse.ArgumentParser(
@@ -342,7 +345,8 @@ def _build_configs():
         print(f"  [WARN] KnormPress unavailable: {exc}")
 
     try:
-        _ = QuantizedCache
+        if QuantizedCache is None or os.environ.get("SKIP_HQQ") == "1":
+            raise ImportError("HQQ setup skipped (QuantizedCache missing or SKIP_HQQ=1)")
         configs.append({
             "name": "HQQ-4bit",
             "press": None,
