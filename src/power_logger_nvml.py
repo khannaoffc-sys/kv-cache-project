@@ -70,6 +70,8 @@ class PowerLogger:
         self._ready_event = threading.Event()
         self._start_time: Optional[float] = None
         self._stop_time: Optional[float] = None
+        self._active_start: Optional[float] = None  # after idle baseline
+        self._active_stop: Optional[float] = None   # taken before join
         self.idle_power_w: float = float("nan")
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -114,6 +116,8 @@ class PowerLogger:
         self._stop_event.clear()
         self._ready_event.clear()
         self._start_time = time.perf_counter()
+        self._active_start = None
+        self._active_stop = None
         self._thread = threading.Thread(target=self._sample_loop, daemon=True)
         self._thread.start()
 
@@ -125,6 +129,7 @@ class PowerLogger:
         """Stop background sampling and wait for the thread to finish."""
         if self._thread is None:
             return
+        self._active_stop = time.perf_counter()
         self._stop_event.set()
         self._thread.join(timeout=5.0)
         self._stop_time = time.perf_counter()
@@ -150,7 +155,9 @@ class PowerLogger:
             raise RuntimeError(
                 "Call start() followed by stop() before reading summary()."
             )
-        duration = self._stop_time - self._start_time
+        t_a = self._active_start if self._active_start is not None else self._start_time
+        t_b = self._active_stop if self._active_stop is not None else self._stop_time
+        duration = t_b - t_a
         if not self._samples:
             return float("nan"), duration, float("nan")
 
@@ -206,6 +213,7 @@ class PowerLogger:
             self.idle_power_w = float("nan")
         self._ready_event.set()
 
+        self._active_start = time.perf_counter()
         # -- Active sampling --
         na_warned = idle_na_warned
         while not self._stop_event.is_set():
